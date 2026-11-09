@@ -1,0 +1,3 @@
+dist/
+/check-sidekiq-status
+/integration/check-sidekiq-status
