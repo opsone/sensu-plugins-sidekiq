@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.1.0] - 2026-11-09
 
 ### Added
 - `check-sidekiq-status`: discovery of the Sidekiq processes from their process title, grouped into instances by tag (`_N` index of systemd template units removed), systemd unit read from the cgroup.
