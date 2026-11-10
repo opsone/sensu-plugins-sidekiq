@@ -37,7 +37,7 @@ From Redis:
 
 Queues are checked per instance: only the queues its processes listen to. Retry and dead sets are shared by every process of a Redis database: they are reported once, on a line per database.
 
-`--expect` lists the instances to check: the other running instances (staging…) are ignored, only named on an `ignored:` line.
+`--expect` lists the instances to check: the other running instances (staging…) are ignored and not reported.
 
 - A name (`myapp_prod`) must be running: CRITICAL if not.
 - A pattern (`*_prod`, `myapp_*`) checks the running instances it matches, without requiring any: a stopped instance goes unnoticed.
@@ -51,7 +51,6 @@ check-sidekiq-status CRITICAL: 1/2 instance(s) in trouble
 myapp_prod OK: 4 process(es) (sidekiq_myapp_prod@1,2,3,4), threads 3/40 busy, latency 0s, queued 2, rss max 412MB
 myapp_searchkick_prod CRITICAL: sidekiq_myapp_searchkick_prod@2 no heartbeat (expired)
 redis 127.0.0.1:6379/1 OK: retry 2, dead 15
-ignored: myapp_staging
 ```
 
 The busy threads come from the process title, updated at each heartbeat (every 5 seconds with Sidekiq 6, 10 seconds since Sidekiq 7).

@@ -70,7 +70,7 @@ func TestEvaluateNothing(t *testing.T) {
 		t.Errorf("evaluate() = %+v", got)
 	}
 	got = evaluate(Input{Expect: expect("*_prod"), Reports: []Report{{Instance: &Instance{Name: "myapp_staging"}}}}, th, now)
-	if got.State != sensu.CheckStateOK || got.Message != "no sidekiq instance checked, ignored: myapp_staging" {
+	if got.State != sensu.CheckStateOK || got.Message != "no sidekiq instance checked" {
 		t.Errorf("evaluate() = %+v", got)
 	}
 }
@@ -211,8 +211,7 @@ func TestEvaluateSelection(t *testing.T) {
 
 	got := evaluate(Input{Expect: expect("*_prod", "redmine"), Reports: reports}, th, now)
 	want := "2 instance(s) OK\nmyapp_prod OK: 1 process(es) (sidekiq_myapp_prod@1), threads 1/10 busy, latency 0s, queued 0, rss max 300MB\n" +
-		"redmine OK: 1 process(es) (sidekiq_redmine@1), threads 1/10 busy, latency 0s, queued 0, rss max 300MB\n" +
-		"ignored: myapp_staging"
+		"redmine OK: 1 process(es) (sidekiq_redmine@1), threads 1/10 busy, latency 0s, queued 0, rss max 300MB"
 	if got.State != sensu.CheckStateOK || got.Message != want {
 		t.Errorf("evaluate() = %d\n%s\nwant\n%s", got.State, got.Message, want)
 	}

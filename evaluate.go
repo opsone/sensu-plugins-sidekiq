@@ -120,13 +120,13 @@ func minProcesses(expect []Expectation, name string, def int) int {
 }
 
 // evaluate turns the discovered instances into a check result: one summary line, one line per
-// checked instance, one per Redis database, the Redis issues, then the ignored instances.
+// checked instance, one per Redis database, then the Redis issues. Unselected instances are not reported.
 func evaluate(in Input, th Thresholds, now time.Time) Result {
 	byName := map[string]Report{}
-	var ignored []string
+	skipped := false
 	for _, r := range in.Reports {
 		if !Selected(in.Expect, r.Instance.Name) {
-			ignored = append(ignored, r.Instance.Name)
+			skipped = true
 			continue
 		}
 		byName[r.Instance.Name] = r
@@ -139,12 +139,11 @@ func evaluate(in Input, th Thresholds, now time.Time) Result {
 	}
 	slices.Sort(names)
 	names = slices.Compact(names)
-	slices.Sort(ignored)
 
 	if len(names) == 0 && len(in.Issues) == 0 {
 		msg := "no sidekiq instance found"
-		if len(ignored) > 0 {
-			msg = "no sidekiq instance checked, ignored: " + strings.Join(ignored, ", ")
+		if skipped {
+			msg = "no sidekiq instance checked"
 		}
 		return Result{sensu.CheckStateOK, msg}
 	}
@@ -183,9 +182,6 @@ func evaluate(in Input, th Thresholds, now time.Time) Result {
 	}
 	if redisTrouble > 0 {
 		summary += fmt.Sprintf(", %d redis issue(s)", redisTrouble)
-	}
-	if len(ignored) > 0 {
-		lines = append(lines, "ignored: "+strings.Join(ignored, ", "))
 	}
 	return Result{worst, summary + "\n" + strings.Join(lines, "\n")}
 }
