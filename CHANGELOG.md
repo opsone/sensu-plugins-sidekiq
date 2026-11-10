@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.1.1] - 2026-11-10
 
 ### Changed
 - `check-sidekiq-status`: the instances not selected by `--expect` are no longer listed in the output (`ignored:` line removed).
