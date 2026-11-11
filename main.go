@@ -32,6 +32,7 @@ type Config struct {
 	RSSWarn      int
 	RSSCrit      int
 	QuietGrace   int
+	RestartGrace int
 	Timeout      int
 	ProcRoot     string
 	StateDir     string
@@ -129,6 +130,10 @@ var (
 			Usage: "Seconds a process may stay quiet (deployment) before WARNING (0: immediately)", Value: &plugin.QuietGrace,
 		},
 		&sensu.PluginConfigOption[int]{
+			Path: "restart-grace", Env: "CHECK_SIDEKIQ_RESTART_GRACE", Argument: "restart-grace", Default: 300,
+			Usage: "Seconds an instance may run fewer processes than required, none included (restart), before alerting (0: immediately)", Value: &plugin.RestartGrace,
+		},
+		&sensu.PluginConfigOption[int]{
 			Path: "timeout", Env: "CHECK_SIDEKIQ_TIMEOUT", Argument: "timeout", Default: 5,
 			Usage: "Redis timeout in seconds", Value: &plugin.Timeout,
 		},
@@ -157,7 +162,7 @@ func checkArgs(event *corev2.Event) (int, error) {
 		"dead-warn": plugin.DeadWarn, "dead-crit": plugin.DeadCrit,
 		"busy-warn": plugin.BusyWarn, "busy-crit": plugin.BusyCrit,
 		"rss-warn": plugin.RSSWarn, "rss-crit": plugin.RSSCrit,
-		"quiet-grace": plugin.QuietGrace,
+		"quiet-grace": plugin.QuietGrace, "restart-grace": plugin.RestartGrace,
 	} {
 		if v < 0 {
 			return sensu.CheckStateUnknown, fmt.Errorf("--%s must not be negative", name)
@@ -198,6 +203,7 @@ func executeCheck(event *corev2.Event) (int, error) {
 		return sensu.CheckStateUnknown, fmt.Errorf("hostname: %w", err)
 	}
 
+	now := time.Now()
 	in := Input{Expect: plugin.expectations}
 	var checked []*Instance
 	for _, inst := range instances {
@@ -207,19 +213,23 @@ func executeCheck(event *corev2.Event) (int, error) {
 			in.Reports = append(in.Reports, Report{Instance: inst})
 		}
 	}
-	if plugin.QuietGrace > 0 {
-		in.StateErr = trackQuiet(plugin.StateDir, checked, time.Now())
-	}
 	if len(checked) > 0 {
 		timeout := time.Duration(plugin.Timeout) * time.Second
 		ctx, cancel := context.WithTimeout(context.Background(), 2*timeout)
 		defer cancel()
-		reports, dbs, issues := collect(ctx, checked, hostname, timeout, time.Now())
+		reports, dbs, issues := collect(ctx, checked, hostname, timeout, now)
 		in.Reports = append(in.Reports, reports...)
 		in.DBs, in.Issues = dbs, issues
 	}
 
-	result := evaluate(in, thresholds(), time.Now())
+	if plugin.QuietGrace > 0 || plugin.RestartGrace > 0 {
+		in.Tracker = LoadTracker(plugin.StateDir, now)
+	}
+	th := thresholds()
+	result := evaluate(in, th, now)
+	if in.Tracker.Save() != nil {
+		result = evaluate(in, th, now) // state not kept: no grace
+	}
 	fmt.Printf("%s %s: %s\n", plugin.Name, stateLabel(result.State), result.Message)
 	return result.State, nil
 }
@@ -311,5 +321,6 @@ func thresholds() Thresholds {
 		RSSWarn:      uint64(plugin.RSSWarn) * 1024 * 1024,
 		RSSCrit:      uint64(plugin.RSSCrit) * 1024 * 1024,
 		QuietGrace:   time.Duration(plugin.QuietGrace) * time.Second,
+		RestartGrace: time.Duration(plugin.RestartGrace) * time.Second,
 	}
 }

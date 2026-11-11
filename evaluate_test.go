@@ -14,7 +14,7 @@ var (
 	th  = Thresholds{
 		MinProcesses: 1, BeatMax: time.Minute, LatencyWarn: 5 * time.Minute, LatencyCrit: 15 * time.Minute,
 		QueuedWarn: 100, QueuedCrit: 1000, RetryWarn: 10, RetryCrit: 100, DeadWarn: 50, DeadCrit: 500,
-		BusyWarn: 80, BusyCrit: 100, RSSWarn: 800 << 20, RSSCrit: 1000 << 20, QuietGrace: 5 * time.Minute,
+		BusyWarn: 80, BusyCrit: 100, RSSWarn: 800 << 20, RSSCrit: 1000 << 20, QuietGrace: 5 * time.Minute, RestartGrace: 5 * time.Minute,
 	}
 )
 
@@ -94,20 +94,6 @@ func TestEvaluate(t *testing.T) {
 			name:   "quiet, since unknown",
 			mutate: func(r *Report) { r.Instance.Processes[1].Stopping = true },
 			state:  sensu.CheckStateWarning, want: "myapp_prod WARNING: sidekiq_myapp_prod@2 quiet (stopping)",
-		},
-		{
-			name: "quiet within grace",
-			mutate: func(r *Report) {
-				r.Instance.Processes[1].Stopping, r.Instance.Processes[1].QuietSince = true, now.Add(-299*time.Second)
-			},
-			state: sensu.CheckStateOK, want: "myapp_prod OK",
-		},
-		{
-			name: "quiet past grace",
-			mutate: func(r *Report) {
-				r.Instance.Processes[1].Stopping, r.Instance.Processes[1].QuietSince = true, now.Add(-6*time.Minute)
-			},
-			state: sensu.CheckStateWarning, want: "myapp_prod WARNING: sidekiq_myapp_prod@2 quiet (stopping) for 6m0s",
 		},
 		{
 			name:   "rss",

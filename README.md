@@ -17,8 +17,8 @@ From the processes (always available):
 
 | Situation | State |
 |---|---|
-| Instance given by name with `--expect` not running | CRITICAL |
-| Fewer processes than expected (`--expect name:N`, or `--min-processes`) | WARNING |
+| Instance given by name with `--expect` not running for more than `--restart-grace` | CRITICAL |
+| Fewer processes than expected (`--expect name:N`, or `--min-processes`) for more than `--restart-grace` | WARNING |
 | Process quiet (`stopping`, TSTP received: it no longer fetches jobs) for more than `--quiet-grace` | WARNING |
 | Process RSS above `--rss-warn` / `--rss-crit` | WARNING / CRITICAL |
 | Busy threads, all processes of the instance, above `--busy-warn` / `--busy-crit` % | WARNING / CRITICAL |
@@ -37,7 +37,12 @@ From Redis:
 
 Queues are checked per instance: only the queues its processes listen to. Retry and dead sets are shared by every process of a Redis database: they are reported once, on a line per database.
 
-A deployment quiets the processes before restarting them: a quiet process is only reported after `--quiet-grace` seconds (default 300). Sidekiq does not record when a process went quiet: the check remembers it in a state file, `check-sidekiq-status.json` in `--state-dir` (default `/var/cache/sensu/sensu-agent`, the agent cache directory, writable by the `sensu` user). Without usable state file, a quiet process is reported at once with a `state WARNING` line. `--quiet-grace 0` reports it at once, without state file.
+A deployment quiets the processes then restarts them, one by one: these transient states are only reported past a grace delay, 300 seconds by default.
+
+- `--quiet-grace`: a quiet process.
+- `--restart-grace`: an instance running fewer processes than required, none included (`not running`). Not running then `12/20 process(es)` is one episode, ended when every process runs again.
+
+Within the grace delay, the instance is OK and its line tells it (`not running for 40s, within grace`); past it, the duration is given (`2/5 process(es) for 6m10s`). Sidekiq does not record these times: the check remembers them in a state file, `check-sidekiq-status.json` in `--state-dir` (default `/var/cache/sensu/sensu-agent`, the agent cache directory, writable by the `sensu` user). Without usable state file, they are reported at once with a `state WARNING` line. A grace of 0 reports at once.
 
 `--expect` lists the instances to check: the other running instances (staging…) are ignored and not reported.
 
@@ -117,9 +122,10 @@ check-sidekiq-status --redis-url <url> [flags]
 | `--rss-warn` | `CHECK_SIDEKIQ_RSS_WARN` | `0` | Process RSS in MB for WARNING |
 | `--rss-crit` | `CHECK_SIDEKIQ_RSS_CRIT` | `0` | Process RSS in MB for CRITICAL |
 | `--quiet-grace` | `CHECK_SIDEKIQ_QUIET_GRACE` | `300` | Seconds a process may stay quiet (deployment) before WARNING, 0 reports it at once |
+| `--restart-grace` | `CHECK_SIDEKIQ_RESTART_GRACE` | `300` | Seconds an instance may run fewer processes than required, none included (restart), 0 reports it at once |
 | `--timeout` | `CHECK_SIDEKIQ_TIMEOUT` | `5` | Redis timeout in seconds |
 | `--proc-root` | `CHECK_SIDEKIQ_PROC_ROOT` | `/proc` | procfs mount point |
-| `--state-dir` | `CHECK_SIDEKIQ_STATE_DIR` | `/var/cache/sensu/sensu-agent` | Directory of the state file of the quiet processes |
+| `--state-dir` | `CHECK_SIDEKIQ_STATE_DIR` | `/var/cache/sensu/sensu-agent` | Directory of the state file of the grace delays |
 
 A threshold set to 0 disables its test. Saturated threads are normal for a job queue under load: the latency is the signal that jobs wait too long, busy thresholds are disabled by default. Lists (`--redis-url`, `--expect`) are repeatable or comma separated, also in their environment variable. A missing `--redis-url`, an invalid URL scheme or an invalid `--expect` is UNKNOWN.
 
@@ -154,6 +160,7 @@ annotations:
   sidekiq_rss_warn: "1200"                               # MB per process, default 0 (disabled)
   sidekiq_rss_crit: "1500"                               # MB per process, default 0 (disabled)
   sidekiq_quiet_grace: "300"                             # seconds, default 300
+  sidekiq_restart_grace: "300"                           # seconds, default 300
   sidekiq_timeout: "5"                                   # seconds, default 5
 ```
 
@@ -185,6 +192,7 @@ spec:
     - CHECK_SIDEKIQ_RSS_WARN={{ .annotations.sidekiq_rss_warn | default "0" }}
     - CHECK_SIDEKIQ_RSS_CRIT={{ .annotations.sidekiq_rss_crit | default "0" }}
     - CHECK_SIDEKIQ_QUIET_GRACE={{ .annotations.sidekiq_quiet_grace | default "300" }}
+    - CHECK_SIDEKIQ_RESTART_GRACE={{ .annotations.sidekiq_restart_grace | default "300" }}
     - CHECK_SIDEKIQ_TIMEOUT={{ .annotations.sidekiq_timeout | default "5" }}
   runtime_assets:
     - opsone/sensu-plugins-sidekiq

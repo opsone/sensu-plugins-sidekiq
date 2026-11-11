@@ -40,8 +40,7 @@ type Process struct {
 	Unit        string // systemd unit, "" if none
 	Busy        int
 	Concurrency int
-	Stopping    bool      // quiet (TSTP received), no new job fetched
-	QuietSince  time.Time // first seen quiet (state file), zero if unknown
+	Stopping    bool // quiet (TSTP received), no new job fetched
 }
 
 // Label names the process in messages: its systemd unit, or its PID.

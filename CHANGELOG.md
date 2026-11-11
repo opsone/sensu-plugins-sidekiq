@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.0] - 2026-11-11
+
+### Added
+- `--restart-grace` (default 300 seconds): an instance running fewer processes than required, none included (`not running`), is only reported after this delay, with its duration. Same state file as `--quiet-grace`.
+
+### Changed
+- A condition within its grace delay is shown on the OK line of the instance (`… for 40s, within grace`).
+
 ## [0.2.0] - 2026-11-11
 
 ### Added

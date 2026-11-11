@@ -29,6 +29,7 @@ type Thresholds struct {
 	RSSWarn      uint64 // bytes, per process
 	RSSCrit      uint64
 	QuietGrace   time.Duration // a quiet process is reported after this delay
+	RestartGrace time.Duration // missing processes are reported after this delay
 }
 
 // Expectation is an --expect entry: an instance name or pattern, with an optional minimum number of
@@ -79,11 +80,11 @@ type DBReport struct {
 
 // Input is everything the evaluation needs.
 type Input struct {
-	Expect   []Expectation
-	Reports  []Report
-	DBs      []DBReport
-	Issues   []string // Redis URLs unusable
-	StateErr error    // quiet processes state unusable: no grace
+	Expect  []Expectation
+	Reports []Report
+	DBs     []DBReport
+	Issues  []string // Redis URLs unusable
+	Tracker *Tracker // times of the conditions under a grace delay, nil: no grace
 }
 
 // Result is the outcome of the evaluation.
@@ -153,9 +154,12 @@ func evaluate(in Input, th Thresholds, now time.Time) Result {
 	worst, inTrouble := sensu.CheckStateOK, 0
 	var lines []string
 	for _, name := range names {
-		state, line := sensu.CheckStateCritical, name+" CRITICAL: not running"
+		var state int
+		var line string
 		if r, found := byName[name]; found {
-			state, line = evaluateInstance(r, minProcesses(in.Expect, name, th.MinProcesses), th, now, len(in.Issues) == 0)
+			state, line = evaluateInstance(r, minProcesses(in.Expect, name, th.MinProcesses), th, now, len(in.Issues) == 0, in.Tracker)
+		} else {
+			state, line = notRunning(name, th, now, in.Tracker)
 		}
 		worst = max(worst, state)
 		if state != sensu.CheckStateOK {
@@ -177,9 +181,9 @@ func evaluate(in Input, th Thresholds, now time.Time) Result {
 		worst = max(worst, sensu.CheckStateWarning)
 		lines = append(lines, "redis WARNING: "+issue)
 	}
-	if in.StateErr != nil {
+	if err := in.Tracker.Err(); err != nil {
 		worst = max(worst, sensu.CheckStateWarning)
-		lines = append(lines, fmt.Sprintf("state WARNING: %v (no quiet grace)", in.StateErr))
+		lines = append(lines, fmt.Sprintf("state WARNING: %v (no grace)", err))
 	}
 
 	summary := fmt.Sprintf("%d instance(s) OK", len(names))
@@ -194,15 +198,29 @@ func evaluate(in Input, th Thresholds, now time.Time) Result {
 
 // evaluateInstance checks one instance. redisComplete tells whether every Redis URL could be read:
 // a process missing from Redis is only reported then.
-func evaluateInstance(r Report, minProcs int, th Thresholds, now time.Time, redisComplete bool) (int, string) {
+func evaluateInstance(r Report, minProcs int, th Thresholds, now time.Time, redisComplete bool, tr *Tracker) (int, string) {
 	inst := r.Instance
 	var findings []finding
+	var notes []string // conditions within their grace delay, shown when OK
 	add := func(state int, format string, args ...any) {
 		findings = append(findings, finding{state, fmt.Sprintf(format, args...)})
 	}
+	// graced reports a condition past its grace delay, immediately when its start is unknown.
+	graced := func(grace time.Duration, key, text string) {
+		since := graceSince(tr, grace, key)
+		switch d := now.Sub(since).Round(time.Second); {
+		case since.IsZero():
+			add(sensu.CheckStateWarning, "%s", text)
+		case d < grace:
+			notes = append(notes, fmt.Sprintf("%s for %s, within grace", text, d))
+		default:
+			add(sensu.CheckStateWarning, "%s for %s", text, d)
+		}
+	}
 
+	// A restart (deployment) stops the processes then starts them again, one by one.
 	if n := len(inst.Processes); minProcs > 0 && n < minProcs {
-		add(sensu.CheckStateWarning, "%d/%d process(es)", n, minProcs)
+		graced(th.RestartGrace, missingKey(inst.Name), fmt.Sprintf("%d/%d process(es)", n, minProcs))
 	}
 
 	var busy, concurrency int
@@ -212,15 +230,9 @@ func evaluateInstance(r Report, minProcs int, th Thresholds, now time.Time, redi
 		concurrency += p.Concurrency
 		maxRSS = max(maxRSS, p.RSS)
 
-		// A deployment quiets the processes before restarting them: quiet is only reported past the
-		// grace delay, immediately when the time it went quiet is unknown.
+		// A deployment quiets the processes before restarting them.
 		if p.Stopping {
-			switch quiet := now.Sub(p.QuietSince); {
-			case p.QuietSince.IsZero() || th.QuietGrace <= 0:
-				add(sensu.CheckStateWarning, "%s quiet (stopping)", p.Label())
-			case quiet >= th.QuietGrace:
-				add(sensu.CheckStateWarning, "%s quiet (stopping) for %s", p.Label(), quiet.Round(time.Second))
-			}
+			graced(th.QuietGrace, quietKey(p), p.Label()+" quiet (stopping)")
 		}
 		switch {
 		case th.RSSCrit > 0 && p.RSS >= th.RSSCrit:
@@ -289,6 +301,7 @@ func evaluateInstance(r Report, minProcs int, th Thresholds, now time.Time, redi
 	if maxRSS > 0 {
 		summary = append(summary, "rss max "+mb(maxRSS))
 	}
+	summary = append(summary, notes...)
 
 	state := sensu.CheckStateOK
 	texts := make([]string, 0, len(findings))
@@ -300,6 +313,27 @@ func evaluateInstance(r Report, minProcs int, th Thresholds, now time.Time, redi
 		return state, fmt.Sprintf("%s OK: %s", inst.Name, strings.Join(summary, ", "))
 	}
 	return state, fmt.Sprintf("%s %s: %s", inst.Name, stateLabel(state), strings.Join(texts, "; "))
+}
+
+// notRunning reports an instance given by name with --expect and not running, past the restart grace delay.
+func notRunning(name string, th Thresholds, now time.Time, tr *Tracker) (int, string) {
+	since := graceSince(tr, th.RestartGrace, missingKey(name))
+	switch d := now.Sub(since).Round(time.Second); {
+	case since.IsZero():
+		return sensu.CheckStateCritical, name + " CRITICAL: not running"
+	case d < th.RestartGrace:
+		return sensu.CheckStateOK, fmt.Sprintf("%s OK: not running for %s, within grace", name, d)
+	default:
+		return sensu.CheckStateCritical, fmt.Sprintf("%s CRITICAL: not running for %s", name, d)
+	}
+}
+
+// graceSince returns since when a condition has been seen, zero without grace delay or state.
+func graceSince(tr *Tracker, grace time.Duration, key string) time.Time {
+	if grace <= 0 {
+		return time.Time{}
+	}
+	return tr.Since(key)
 }
 
 func evaluateDB(db DBReport, th Thresholds) (int, string) {

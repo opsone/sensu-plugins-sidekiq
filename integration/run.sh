@@ -125,6 +125,11 @@ suite() { # <sidekiq version>
   dx kill -KILL "$quiet"
   sleep 1
   expect 1 -r $scan -e myapp_prod:2
+  expect 0 -r $scan -e myapp_prod:2 --state-dir "$state"                     # within the restart grace
+  sleep 3
+  expect 1 -r $scan -e myapp_prod:2 --state-dir "$state" --restart-grace 2   # past the restart grace
+  expect 0 -r $scan -e myapp_prod,absent_prod --state-dir "$state"           # not running, within grace
+  expect 2 -r $scan -e myapp_prod,absent_prod --restart-grace 0
   expect 0 -r $scan -e myapp_prod
 }
 
