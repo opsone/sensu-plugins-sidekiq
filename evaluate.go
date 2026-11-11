@@ -28,6 +28,7 @@ type Thresholds struct {
 	BusyCrit     int
 	RSSWarn      uint64 // bytes, per process
 	RSSCrit      uint64
+	QuietGrace   time.Duration // a quiet process is reported after this delay
 }
 
 // Expectation is an --expect entry: an instance name or pattern, with an optional minimum number of
@@ -78,10 +79,11 @@ type DBReport struct {
 
 // Input is everything the evaluation needs.
 type Input struct {
-	Expect  []Expectation
-	Reports []Report
-	DBs     []DBReport
-	Issues  []string // Redis URLs unusable
+	Expect   []Expectation
+	Reports  []Report
+	DBs      []DBReport
+	Issues   []string // Redis URLs unusable
+	StateErr error    // quiet processes state unusable: no grace
 }
 
 // Result is the outcome of the evaluation.
@@ -175,6 +177,10 @@ func evaluate(in Input, th Thresholds, now time.Time) Result {
 		worst = max(worst, sensu.CheckStateWarning)
 		lines = append(lines, "redis WARNING: "+issue)
 	}
+	if in.StateErr != nil {
+		worst = max(worst, sensu.CheckStateWarning)
+		lines = append(lines, fmt.Sprintf("state WARNING: %v (no quiet grace)", in.StateErr))
+	}
 
 	summary := fmt.Sprintf("%d instance(s) OK", len(names))
 	if inTrouble > 0 {
@@ -206,8 +212,15 @@ func evaluateInstance(r Report, minProcs int, th Thresholds, now time.Time, redi
 		concurrency += p.Concurrency
 		maxRSS = max(maxRSS, p.RSS)
 
+		// A deployment quiets the processes before restarting them: quiet is only reported past the
+		// grace delay, immediately when the time it went quiet is unknown.
 		if p.Stopping {
-			add(sensu.CheckStateWarning, "%s quiet (stopping)", p.Label())
+			switch quiet := now.Sub(p.QuietSince); {
+			case p.QuietSince.IsZero() || th.QuietGrace <= 0:
+				add(sensu.CheckStateWarning, "%s quiet (stopping)", p.Label())
+			case quiet >= th.QuietGrace:
+				add(sensu.CheckStateWarning, "%s quiet (stopping) for %s", p.Label(), quiet.Round(time.Second))
+			}
 		}
 		switch {
 		case th.RSSCrit > 0 && p.RSS >= th.RSSCrit:

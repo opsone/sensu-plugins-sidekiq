@@ -114,7 +114,12 @@ suite() { # <sidekiq version>
   local quiet; quiet=$(pid_of myapp_prod 1)
   dx kill -TSTP "$quiet"
   sleep 11
-  expect 1 -r $scan -e myapp_prod
+  local state; state=$(dx runuser -u nobody -- mktemp -d)
+  expect 0 -r $scan -e myapp_prod --state-dir "$state"                 # within the grace delay
+  sleep 3
+  expect 1 -r $scan -e myapp_prod --state-dir "$state" --quiet-grace 2 # past the grace delay
+  expect 1 -r $scan -e myapp_prod --quiet-grace 0
+  expect 1 -r $scan -e myapp_prod --state-dir /nonexistent             # no state: no grace
 
   # Process gone.
   dx kill -KILL "$quiet"

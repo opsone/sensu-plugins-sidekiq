@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.2.0] - 2026-11-11
+
+### Added
+- `--quiet-grace` (default 300 seconds): a quiet process (deployment) is only reported after this delay, with its quiet duration. The time a process went quiet is kept in a state file, `--state-dir` (default `/var/cache/sensu/sensu-agent`); without usable state file, it is reported at once with a `state WARNING` line.
+
 ## [0.1.1] - 2026-11-10
 
 ### Changed

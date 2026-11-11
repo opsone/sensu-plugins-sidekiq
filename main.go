@@ -31,8 +31,10 @@ type Config struct {
 	BusyCrit     int
 	RSSWarn      int
 	RSSCrit      int
+	QuietGrace   int
 	Timeout      int
 	ProcRoot     string
+	StateDir     string
 
 	expectations []Expectation
 }
@@ -123,12 +125,20 @@ var (
 			Usage: "Process RSS in MB for CRITICAL (0 disables)", Value: &plugin.RSSCrit,
 		},
 		&sensu.PluginConfigOption[int]{
+			Path: "quiet-grace", Env: "CHECK_SIDEKIQ_QUIET_GRACE", Argument: "quiet-grace", Default: 300,
+			Usage: "Seconds a process may stay quiet (deployment) before WARNING (0: immediately)", Value: &plugin.QuietGrace,
+		},
+		&sensu.PluginConfigOption[int]{
 			Path: "timeout", Env: "CHECK_SIDEKIQ_TIMEOUT", Argument: "timeout", Default: 5,
 			Usage: "Redis timeout in seconds", Value: &plugin.Timeout,
 		},
 		&sensu.PluginConfigOption[string]{
 			Path: "proc-root", Env: "CHECK_SIDEKIQ_PROC_ROOT", Argument: "proc-root", Default: "/proc",
 			Usage: "procfs mount point", Value: &plugin.ProcRoot,
+		},
+		&sensu.PluginConfigOption[string]{
+			Path: "state-dir", Env: "CHECK_SIDEKIQ_STATE_DIR", Argument: "state-dir", Default: "/var/cache/sensu/sensu-agent",
+			Usage: "Directory of the state file remembering when the processes went quiet (writable by the agent user)", Value: &plugin.StateDir,
 		},
 	}
 )
@@ -147,6 +157,7 @@ func checkArgs(event *corev2.Event) (int, error) {
 		"dead-warn": plugin.DeadWarn, "dead-crit": plugin.DeadCrit,
 		"busy-warn": plugin.BusyWarn, "busy-crit": plugin.BusyCrit,
 		"rss-warn": plugin.RSSWarn, "rss-crit": plugin.RSSCrit,
+		"quiet-grace": plugin.QuietGrace,
 	} {
 		if v < 0 {
 			return sensu.CheckStateUnknown, fmt.Errorf("--%s must not be negative", name)
@@ -195,6 +206,9 @@ func executeCheck(event *corev2.Event) (int, error) {
 		} else {
 			in.Reports = append(in.Reports, Report{Instance: inst})
 		}
+	}
+	if plugin.QuietGrace > 0 {
+		in.StateErr = trackQuiet(plugin.StateDir, checked, time.Now())
 	}
 	if len(checked) > 0 {
 		timeout := time.Duration(plugin.Timeout) * time.Second
@@ -296,5 +310,6 @@ func thresholds() Thresholds {
 		BusyCrit:     plugin.BusyCrit,
 		RSSWarn:      uint64(plugin.RSSWarn) * 1024 * 1024,
 		RSSCrit:      uint64(plugin.RSSCrit) * 1024 * 1024,
+		QuietGrace:   time.Duration(plugin.QuietGrace) * time.Second,
 	}
 }
